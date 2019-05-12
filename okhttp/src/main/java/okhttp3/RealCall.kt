@@ -93,7 +93,7 @@ internal class RealCall private constructor(
 
   internal inner class AsyncCall(
     private val responseCallback: Callback
-  ): Runnable {
+  ) : Runnable {
     @Volatile private var callsPerHost = AtomicInteger(0)
 
     fun callsPerHost(): AtomicInteger = callsPerHost
