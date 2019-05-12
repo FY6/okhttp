@@ -26,6 +26,7 @@ import okhttp3.internal.http.RealInterceptorChain
 import okhttp3.internal.http.RetryAndFollowUpInterceptor
 import okhttp3.internal.platform.Platform
 import okhttp3.internal.platform.Platform.Companion.INFO
+import okhttp3.internal.threadName
 import okio.Timeout
 import java.io.IOException
 import java.io.InterruptedIOException
@@ -92,7 +93,7 @@ internal class RealCall private constructor(
 
   internal inner class AsyncCall(
     private val responseCallback: Callback
-  ) {
+  ): Runnable {
     @Volatile private var callsPerHost = AtomicInteger(0)
 
     fun callsPerHost(): AtomicInteger = callsPerHost
@@ -115,7 +116,7 @@ internal class RealCall private constructor(
       assert(!Thread.holdsLock(client.dispatcher()))
       var success = false
       try {
-        executorService.execute("OkHttp ${redactedUrl()}", this@AsyncCall::run)
+        executorService.execute(this@AsyncCall)
         success = true
       } catch (e: RejectedExecutionException) {
         val ioException = InterruptedIOException("executor rejected")
@@ -129,22 +130,24 @@ internal class RealCall private constructor(
       }
     }
 
-    private fun run() {
-      var signalledCallback = false
-      transmitter.timeoutEnter()
-      try {
-        val response = getResponseWithInterceptorChain()
-        signalledCallback = true
-        responseCallback.onResponse(this@RealCall, response)
-      } catch (e: IOException) {
-        if (signalledCallback) {
-          // Do not signal the callback twice!
-          Platform.get().log(INFO, "Callback failure for ${toLoggableString()}", e)
-        } else {
-          responseCallback.onFailure(this@RealCall, e)
+    override fun run() {
+      threadName("OkHttp ${redactedUrl()}") {
+        var signalledCallback = false
+        transmitter.timeoutEnter()
+        try {
+          val response = getResponseWithInterceptorChain()
+          signalledCallback = true
+          responseCallback.onResponse(this@RealCall, response)
+        } catch (e: IOException) {
+          if (signalledCallback) {
+            // Do not signal the callback twice!
+            Platform.get().log(INFO, "Callback failure for ${toLoggableString()}", e)
+          } else {
+            responseCallback.onFailure(this@RealCall, e)
+          }
+        } finally {
+          client.dispatcher().finished(this)
         }
-      } finally {
-        client.dispatcher().finished(this)
       }
     }
   }
