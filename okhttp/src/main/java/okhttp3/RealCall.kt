@@ -15,11 +15,11 @@
  */
 package okhttp3
 
-import okhttp3.internal.NamedRunnable
 import okhttp3.internal.Util.closeQuietly
 import okhttp3.internal.cache.CacheInterceptor
 import okhttp3.internal.connection.ConnectInterceptor
 import okhttp3.internal.connection.Transmitter
+import okhttp3.internal.execute
 import okhttp3.internal.http.BridgeInterceptor
 import okhttp3.internal.http.CallServerInterceptor
 import okhttp3.internal.http.RealInterceptorChain
@@ -87,12 +87,12 @@ internal class RealCall private constructor(
 
   @SuppressWarnings("CloneDoesntCallSuperClone") // We are a final type & this saves clearing state.
   override fun clone(): RealCall {
-    return RealCall.newRealCall(client, originalRequest, forWebSocket)
+    return newRealCall(client, originalRequest, forWebSocket)
   }
 
   internal inner class AsyncCall(
     private val responseCallback: Callback
-  ) : NamedRunnable("OkHttp %s", redactedUrl()) {
+  ) {
     @Volatile private var callsPerHost = AtomicInteger(0)
 
     fun callsPerHost(): AtomicInteger = callsPerHost
@@ -115,7 +115,7 @@ internal class RealCall private constructor(
       assert(!Thread.holdsLock(client.dispatcher()))
       var success = false
       try {
-        executorService.execute(this)
+        executorService.execute("OkHttp ${redactedUrl()}", this@AsyncCall::run)
         success = true
       } catch (e: RejectedExecutionException) {
         val ioException = InterruptedIOException("executor rejected")
@@ -129,7 +129,7 @@ internal class RealCall private constructor(
       }
     }
 
-    override fun execute() {
+    private fun run() {
       var signalledCallback = false
       transmitter.timeoutEnter()
       try {
